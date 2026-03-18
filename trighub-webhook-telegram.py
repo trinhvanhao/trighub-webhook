@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Trighub Webhook v2.1 - With Direct Telegram Support
+Trighub Webhook v2.2 - With Enhanced Telegram Notifications
 - Receives webhook data from Trighub
 - Persists to SQLite database
-- Sends Telegram notifications directly (no openclaw dependency)
+- Sends formatted Telegram notifications
 - Supports recovery queue for reliability
 """
 
@@ -32,13 +32,54 @@ def log(message):
     with open(LOG_FILE, "a") as f:
         f.write(log_line + "\n")
 
-def send_telegram(message):
-    """Send message to Telegram via Bot API"""
+def send_telegram(data):
+    """Send formatted message to Telegram via Bot API"""
     if not TELEGRAM_BOT_TOKEN:
-        log("⚠️ TELEGRAM_BOT_TOKEN not configured - skipping Telegram notification")
+        log("⚠️ TELEGRAM_BOT_TOKEN not configured - skipping notification")
         return False
     
     try:
+        # Extract data
+        amount = data.get('amount', 0)
+        content = data.get('content', '')
+        bank = data.get('bankName', 'Unknown')
+        transaction_type = data.get('transactionType', 'OUT')
+        transaction_id = data.get('transaction_id', 'N/A')
+        
+        # Determine if IN or OUT
+        is_inflow = transaction_type.upper() == 'IN' or 'NHAN' in content.upper()
+        
+        # Format message based on transaction type
+        if is_inflow:
+            # NHẬN (Inflow)
+            message = f"""<b>💚 NHẬN</b>
+
+<b>Ngân hàng:</b> {bank}
+<b>Số tiền:</b> <code>{amount:,.0f} VND</code>
+<b>Mã giao dịch:</b> <code>{transaction_id}</code>
+<b>Nội dung:</b> <i>{content}</i>
+
+<b>⏰ Thời gian:</b> {datetime.now().strftime('%H:%M:%S - %d/%m/%Y')}"""
+        else:
+            # CHUYỂN (Outflow)
+            # Extract recipient name from content if possible
+            recipient = data.get('recipient_name', 'Unknown')
+            if not recipient or recipient == 'Unknown':
+                # Try to extract from content
+                words = content.split()
+                recipient = words[0] if words else 'Unknown'
+            
+            message = f"""<b>❤️ CHUYỂN</b>
+
+<b>Ngân hàng:</b> {bank}
+<b>Số tiền:</b> <code>{amount:,.0f} VND</code>
+<b>Tên người nhận:</b> {recipient}
+<b>Mã giao dịch:</b> <code>{transaction_id}</code>
+<b>Nội dung:</b> <i>{content}</i>
+
+<b>⏰ Thời gian:</b> {datetime.now().strftime('%H:%M:%S - %d/%m/%Y')}"""
+        
+        # Send to Telegram
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
@@ -79,6 +120,8 @@ class Database:
                 content TEXT,
                 bank_name TEXT,
                 transaction_type TEXT,
+                transaction_id TEXT,
+                recipient_name TEXT,
                 category TEXT,
                 raw_data TEXT,
                 processed INTEGER DEFAULT 0
@@ -108,8 +151,8 @@ class Database:
             conn = sqlite3.connect(self.db_path)
             conn.execute('''
                 INSERT INTO transactions 
-                (timestamp, received_at, amount, content, bank_name, transaction_type, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (timestamp, received_at, amount, content, bank_name, transaction_type, transaction_id, recipient_name, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data.get('timestamp', datetime.now().isoformat()),
                 datetime.now().isoformat(),
@@ -117,6 +160,8 @@ class Database:
                 data.get('content', ''),
                 data.get('bankName', ''),
                 data.get('transactionType', ''),
+                data.get('transaction_id', ''),
+                data.get('recipient_name', ''),
                 json.dumps(data)
             ))
             conn.commit()
@@ -150,20 +195,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 log(f"✅ Transaction saved to database")
                 
                 # Send Telegram notification
-                amount = data.get('amount', 0)
-                content = data.get('content', '')[:100]
-                bank = data.get('bankName', 'Unknown')
-                
-                txn_type = "📥 THU" if 'NHAN' in content.upper() else "📤 CHI"
-                
-                telegram_msg = f"""<b>{txn_type} | {amount:,} VND</b>
-━━━━━━━━━━━━━━━━━━━━━
-🏦 <b>Ngân hàng:</b> {bank}
-📝 <b>Nội dung:</b> {content}
-⏰ <b>Thời gian:</b> {datetime.now().strftime('%H:%M:%S')}
-📅 <b>Ngày:</b> {datetime.now().strftime('%d/%m/%Y')}"""
-                
-                send_telegram(telegram_msg)
+                send_telegram(data)
             
             # Send success response
             self.send_response(200)
@@ -183,7 +215,7 @@ def main():
     server = HTTPServer(('localhost', port), WebhookHandler)
     
     log("════════════════════════════════════════════════════")
-    log(f"🚀 Trighub Webhook Server v2.1 Starting")
+    log(f"🚀 Trighub Webhook Server v2.2 Starting")
     log(f"📍 Port: {port}")
     log(f"🏦 Database: {DB_PATH}")
     log(f"💬 Telegram: {'✅ ENABLED' if TELEGRAM_BOT_TOKEN else '⚠️ DISABLED'}")
